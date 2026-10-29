@@ -69,6 +69,10 @@ internal sealed class HostingCheck
     private PhotinoWindow _main;
     private PhotinoWindow _popup;
     private PhotinoPopupRequest _acceptedRequest;
+    private PhotinoPopupRequest _refuseLater;
+    private WeakReference<PhotinoWindow> _unheldPopup;
+    private int _popupsDestroyed;
+    private bool _hostClosedPopup;
     private IntPtr _surface;
     private Rectangle _panel;
     private int _popupRequests;
@@ -88,7 +92,7 @@ internal sealed class HostingCheck
             .SetTemporaryFilesPath(_dataPath)
             .SetStartHidden(true)
             .SetCompositionHosting(true)
-            .SetPopupRequestTimeoutMilliseconds(3000)
+            .SetPopupRequestTimeoutMilliseconds(1500)
             .RegisterHostInputHandler(OnHostInput)
             .RegisterPopupRequestedHandler(OnPopupRequested)
             .RegisterWebMessageReceivedHandler((_, message) => OnPageMessage(message))
@@ -148,6 +152,13 @@ internal sealed class HostingCheck
 
     private bool OnHostInput(PhotinoWindow window, in PhotinoHostInput input)
     {
+        if (_refuseLater != null && window == _main)
+        {
+            // An accepted request refused later, from another callback.
+            var request = _refuseLater;
+            _refuseLater = null;
+            request.Refuse();
+        }
         if (input.Message == WM_MOUSEMOVE && !_hostMoveSeen && window == _main)
         {
             _hostMoveSeen = true;
@@ -170,35 +181,73 @@ internal sealed class HostingCheck
     private bool OnPopupRequested(PhotinoPopupRequest request)
     {
         _popupRequests++;
-        if (_popupRequests != 1)
-            return false;   // refused: window.open returns null
-
-        _acceptedRequest = request;
-        _popup = request.CreateWindow()
-            .SetTitle("Photino.NET hosting check popup")
-            .RegisterWindowDestroyedHandler((_, _) => OnPopupDestroyed());
-        _popup.WaitForClose();  // the message loop runs already: this creates the window and returns
-        return true;
+        switch (_popupRequests)
+        {
+            case 1:     // accepted and fulfilled now; the host closes it later
+                _acceptedRequest = request;
+                _popup = request.CreateWindow()
+                    .SetTitle("Photino.NET hosting check popup")
+                    .SetStartHidden(true)
+                    .RegisterWindowDestroyedHandler((_, _) => OnPopupDestroyed());
+                _popup.WaitForClose();  // the message loop runs already: this creates the window and returns
+                return true;
+            case 3:     // accepted, then refused from a later callback
+                _refuseLater = request;
+                PostMessageW(_main.WindowHandle, WM_MOUSEMOVE, IntPtr.Zero, MakeLParam(HostX + 10, HostY + 10));
+                return true;
+            case 4:     // accepted and never fulfilled: the timeout refuses it
+                return true;
+            case 5:     // accepted and fulfilled, not held by the host; the page closes it
+                var unheld = request.CreateWindow()
+                    .SetStartHidden(true)
+                    .RegisterWindowDestroyedHandler((_, _) => OnPopupDestroyed());
+                unheld.WaitForClose();
+                _unheldPopup = new WeakReference<PhotinoWindow>(unheld);
+                return true;
+            default:    // refused now: window.open returns null
+                return false;
+        }
     }
 
     private void OnPopupsOpened(string[] parts)
     {
-        // popups:<accepted not null>:<scripted>:<refused is null>
+        // popups:<accepted>:<scripted>:<refused null>:<refused later null>:<timed out null>:<wait ms>:<page-closed opened>
         Check("an accepted window.open returns a window", parts[1] == "true");
         Check("the page scripts the popup", parts[2] == "true");
         Check("a refused window.open returns null", parts[3] == "true");
-        Check("two popup requests reached the host", _popupRequests == 2, _popupRequests.ToString());
+        Check("an accepted request refused later returns null", parts[4] == "true");
+        Check("an accepted request never fulfilled times out to null", parts[5] == "true" && int.Parse(parts[6]) >= 1400, $"waited {parts[6]} ms");
+        Check("a popup the host does not hold opens", parts[7] == "true");
+        Check("five popup requests reached the host", _popupRequests == 5, _popupRequests.ToString());
         Check("window.open's size and position reach the host",
             _acceptedRequest?.Size == new Size(400, 300) && _acceptedRequest?.Position == new Point(50, 60),
             $"{_acceptedRequest?.Size} {_acceptedRequest?.Position}");
-        Check("the popup is the opener's", _popup?.PopupOpener == _main && _main.Popups.Count == 1 && _main.Popups[0] == _popup);
+        Check("the popup is the opener's", _popup?.PopupOpener == _main && _main.Popups.Contains(_popup));
         Check("the popup is of the opener's kind (composition)", _popup?.CompositionHostingEnabled == true);
+
+        // The window a host does not hold is pinned until destroyed: callbacks still arrive after a full collection.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        _hostClosedPopup = true;
         _popup?.Close();
+        FinishWhenPopupsGone();
     }
 
     private void OnPopupDestroyed()
     {
-        Check("the popup closed by the host is destroyed and released", _main.Popups.Count == 0);
+        _popupsDestroyed++;
+        FinishWhenPopupsGone();
+    }
+
+    private void FinishWhenPopupsGone()
+    {
+        if (!_hostClosedPopup || _popupsDestroyed < 2)
+            return;
+        Check("both popups (closed by the host and by the page) are destroyed and released", _main.Popups.Count == 0);
+        Check("the popup destroyed is marked so", _popup.IsDestroyed);
+        _popup.RemoveCompositionSurface(IntPtr.Zero);   // after destruction: does nothing
         _main.RemoveCompositionSurface(_surface);
         Check("the surface is removed", true);
         Finish(null);
@@ -236,7 +285,14 @@ internal sealed class HostingCheck
             let scripted = false;
             if (accepted) { accepted.document.title = 'scripted'; scripted = accepted.document.title === 'scripted'; }
             const refused = window.open('about:blank', 'refused');
-            send('popups:' + (accepted !== null) + ':' + scripted + ':' + (refused === null));
+            const refusedLater = window.open('about:blank', 'refused-later');
+            const start = performance.now();
+            const timedOut = window.open('about:blank', 'timed-out');
+            const waited = Math.round(performance.now() - start);
+            const pageClosed = window.open('about:blank', 'page-closed');
+            if (pageClosed) pageClosed.close();
+            send('popups:' + (accepted !== null) + ':' + scripted + ':' + (refused === null) + ':' +
+              (refusedLater === null) + ':' + (timedOut === null) + ':' + waited + ':' + (pageClosed !== null));
           });
           function publish() {
             if (!window.photino) { send('ready:none'); return; }

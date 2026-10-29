@@ -19,12 +19,12 @@ public class StructLayoutTests
         if (!OperatingSystem.IsWindows())
             return;
 
-        var expected = new List<int> { Marshal.SizeOf(managed) };
-        expected.AddRange(fields.Select(field => (int)Marshal.OffsetOf(managed, field)));
+        var managedLayout = new List<int> { Marshal.SizeOf(managed) };
+        managedLayout.AddRange(fields.Select(field => (int)Marshal.OffsetOf(managed, field)));
 
-        var native = NativeLayout(nativeName);
+        var nativeLayout = NativeLayout(nativeName);
 
-        Assert.Equal(native, expected);
+        Assert.Equal(nativeLayout, managedLayout);
     }
 
     [Fact]
@@ -35,6 +35,22 @@ public class StructLayoutTests
         Assert.Equal(5, typeof(PhotinoHostInput).GetFields().Length);
         Assert.Equal(5, typeof(PhotinoSurfaceBounds).GetFields().Length);
         Assert.Equal(6, typeof(PhotinoNativePopupFeatures).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
+    }
+
+    [Fact]
+    public void StructsReadByPointerAreBlittable()
+    {
+        // The callbacks read these through pointer casts, so the managed layout must be the marshalled one.
+        AssertBlittable<PhotinoNativeWindowsOptions>();
+        AssertBlittable<PhotinoHostInput>();
+        AssertBlittable<PhotinoSurfaceBounds>();
+        AssertBlittable<PhotinoNativePopupFeatures>();
+    }
+
+    private static void AssertBlittable<T>() where T : struct
+    {
+        Assert.False(System.Runtime.CompilerServices.RuntimeHelpers.IsReferenceOrContainsReferences<T>());
+        Assert.Equal(Marshal.SizeOf<T>(), System.Runtime.CompilerServices.Unsafe.SizeOf<T>());
     }
 
     [Fact]

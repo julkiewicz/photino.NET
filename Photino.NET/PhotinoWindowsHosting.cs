@@ -112,11 +112,18 @@ public sealed class PhotinoPopupRequest
     public Size? Size { get; }
 
     /// <summary>
-    /// A new window of the opener's kind (its Windows options, handlers and custom schemes, and the requested
-    /// position and size) set to fulfil this request. Change what it needs, then call
-    /// <see cref="PhotinoWindow.WaitForClose"/> on the opener's thread: the window joins the opener's WebView2
-    /// environment and becomes the page's new window.
+    /// A new window of the opener's kind, set to fulfil this request. Call it, and then
+    /// <see cref="PhotinoWindow.WaitForClose"/> on the new window, on the opener's thread (it throws on any other):
+    /// the window joins the opener's WebView2 environment and becomes the page's new window.
     /// </summary>
+    /// <remarks>
+    /// Copied from the opener: its Windows hosting options except StartHidden (a pop-out starts visible; set it again
+    /// to keep it hidden), its host input and popup request handlers, its web message handlers, its custom schemes,
+    /// and its browser settings as set before its creation (context menu, dev tools, zoom, user agent, permissions,
+    /// transparency, temporary files path and the other start parameters of that kind). Taken from the request:
+    /// window.open's position and size, as the page gave them. Not copied: the title, icon, size limits, the other
+    /// window events (closing, resize, focus, destroyed) and anything changed on the opener after its creation.
+    /// </remarks>
     public PhotinoWindow CreateWindow() => Opener.CreatePopupWindow(this);
 
     /// <summary>Refuses the request (window.open returns null). Does nothing once it was fulfilled or refused.</summary>

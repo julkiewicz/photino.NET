@@ -35,9 +35,12 @@ public partial class PhotinoWindow
     internal static extern unsafe int Photino_GetStructLayout_win32(string name, int* values, int capacity);
 
     private PhotinoNativeWindowsOptions _windowsOptions;
-    private bool _hasWindowsOptions;
     private PhotinoHostInputHandler _hostInputHandler;
     private PhotinoPopupRequestedHandler _popupRequestedHandler;
+    // Made with Photino_ctorWithOptions_win32 (decided at creation; see HasWindowsOptions).
+    private bool _hasWindowsOptions;
+    // Set when the native window is destroyed: hosting calls after it throw, or do nothing where that is safe.
+    private bool _destroyed;
     // The delegates native code calls: kept alive as long as this window.
     private CppHostInputDelegate _cppHostInput;
     private CppPopupRequestedDelegate _cppPopupRequested;
@@ -47,24 +50,41 @@ public partial class PhotinoWindow
     private GCHandle _aliveUntilDestroyed;
     private PhotinoWindow _popupOpener;
     private readonly List<PhotinoWindow> _popups = new();
+    private IReadOnlyList<PhotinoWindow> _popupsView;
 
-    /// <summary>Raised on the window's thread when its native window was destroyed (windows with Windows hosting options only).</summary>
+    /// <summary>
+    /// Raised on the window's thread when its native window was destroyed; no callback is made for the window after
+    /// it. Windows only, and only for a window made with the Windows hosting options (registering a handler before
+    /// creation is itself such an option).
+    /// </summary>
     public event EventHandler WindowDestroyed;
 
     /// <summary>The window whose page opened this one, or null when this window is not a popup.</summary>
     public PhotinoWindow PopupOpener => _popupOpener;
 
-    /// <summary>The popups this window's page opened that are still open. Read on the window's thread.</summary>
-    public IReadOnlyList<PhotinoWindow> Popups => _popups;
+    /// <summary>The popups this window's page opened that are still open. Read it on the window's thread only.</summary>
+    public IReadOnlyList<PhotinoWindow> Popups => _popupsView ??= _popups.AsReadOnly();
+
+    /// <summary>Whether the native window was destroyed (windows made with the Windows hosting options only).</summary>
+    public bool IsDestroyed => _destroyed;
+
+    // Options are set before creation. A window is made with Photino_ctorWithOptions_win32 when any of them differs
+    // from its default (a handler counts, including a WindowDestroyed handler); such a window's own placement,
+    // minimize, maximize and restore calls never activate it. Otherwise Photino_ctor makes it exactly as before.
+    private bool HasWindowsOptions =>
+        _windowsOptions.StartHidden != 0 || _windowsOptions.CompositionHosting != 0
+        || _windowsOptions.HitRegionHoldMilliseconds != 0 || _windowsOptions.PopupRequestTimeoutMilliseconds != 0
+        || _hostInputHandler != null || _popupRequestedHandler != null || WindowDestroyed != null
+        || _popupOpener != null;
 
     /// <summary>
     /// Windows only, before the window is created: create it without showing it. The page still loads, lays out
-    /// and runs, and never takes focus; <see cref="Show"/> shows it. With any of the Windows hosting options set,
-    /// minimize, maximize and restore never activate the window.
+    /// and runs, and never takes focus; <see cref="Show"/> shows it. Any Windows hosting option set to a value other
+    /// than its default makes the window's own placement, minimize, maximize and restore calls never activate it.
     /// </summary>
     public PhotinoWindow SetStartHidden(bool startHidden)
     {
-        PrepareWindowsOption(nameof(SetStartHidden));
+        ThrowIfCreatedOrNotWindows(nameof(SetStartHidden));
         _windowsOptions.StartHidden = (byte)(startHidden ? 1 : 0);
         return this;
     }
@@ -78,7 +98,7 @@ public partial class PhotinoWindow
     /// </summary>
     public PhotinoWindow SetCompositionHosting(bool compositionHosting)
     {
-        PrepareWindowsOption(nameof(SetCompositionHosting));
+        ThrowIfCreatedOrNotWindows(nameof(SetCompositionHosting));
         _windowsOptions.CompositionHosting = (byte)(compositionHosting ? 1 : 0);
         return this;
     }
@@ -89,7 +109,7 @@ public partial class PhotinoWindow
     /// </summary>
     public PhotinoWindow SetHitRegionHoldMilliseconds(int milliseconds)
     {
-        PrepareWindowsOption(nameof(SetHitRegionHoldMilliseconds));
+        ThrowIfCreatedOrNotWindows(nameof(SetHitRegionHoldMilliseconds));
         _windowsOptions.HitRegionHoldMilliseconds = milliseconds;
         return this;
     }
@@ -100,102 +120,105 @@ public partial class PhotinoWindow
     /// </summary>
     public PhotinoWindow SetPopupRequestTimeoutMilliseconds(int milliseconds)
     {
-        PrepareWindowsOption(nameof(SetPopupRequestTimeoutMilliseconds));
+        ThrowIfCreatedOrNotWindows(nameof(SetPopupRequestTimeoutMilliseconds));
         _windowsOptions.PopupRequestTimeoutMilliseconds = milliseconds;
         return this;
     }
 
-    /// <summary>Windows only, before the window is created: receives the input composition hosting routes to the host.</summary>
+    /// <summary>
+    /// Windows only, before the window is created: receives the input composition hosting routes to the host. An
+    /// exception it throws is logged and the input treated as not handled.
+    /// </summary>
     public PhotinoWindow RegisterHostInputHandler(PhotinoHostInputHandler handler)
     {
-        PrepareWindowsOption(nameof(RegisterHostInputHandler));
+        ThrowIfCreatedOrNotWindows(nameof(RegisterHostInputHandler));
         _hostInputHandler = handler;
         return this;
     }
 
     /// <summary>
     /// Windows only, before the window is created: receives the page's window.open requests. Without one,
-    /// WebView2's own behavior is unchanged.
+    /// WebView2's own behavior is unchanged. An exception it throws is logged and the request refused.
     /// </summary>
     public PhotinoWindow RegisterPopupRequestedHandler(PhotinoPopupRequestedHandler handler)
     {
-        PrepareWindowsOption(nameof(RegisterPopupRequestedHandler));
+        ThrowIfCreatedOrNotWindows(nameof(RegisterPopupRequestedHandler));
         _popupRequestedHandler = handler;
         return this;
     }
 
-    /// <summary>Registers a handler for <see cref="WindowDestroyed"/>.</summary>
+    /// <summary>
+    /// Windows only: registers a handler for <see cref="WindowDestroyed"/>. Before creation it makes the window one
+    /// with the Windows hosting options; after creation it is allowed only on such a window.
+    /// </summary>
     public PhotinoWindow RegisterWindowDestroyedHandler(EventHandler handler)
     {
+        if (!IsWindowsPlatform)
+            throw new PlatformNotSupportedException($"{nameof(RegisterWindowDestroyedHandler)} is available on Windows only.");
+        if (_nativeInstance != IntPtr.Zero && !_hasWindowsOptions)
+            throw new InvalidOperationException("WindowDestroyed is raised only for a window made with the Windows hosting options.");
         WindowDestroyed += handler;
         return this;
     }
 
-    /// <summary>Windows only: whether the window is hosted through the composition controller.</summary>
+    // HOSTING CALLS. Windows only, after creation, on the window's thread only. There is no cross-thread path: a
+    // call from another thread into a window closing on its own thread could otherwise wait for good.
+
+    /// <summary>Whether the window is hosted through the composition controller. False before creation and after destruction.</summary>
     public bool CompositionHostingEnabled
     {
         get
         {
-            if (!IsWindowsPlatform || _nativeInstance == IntPtr.Zero)
+            if (!IsWindowsPlatform || _nativeInstance == IntPtr.Zero || _destroyed)
                 return false;
-            byte enabled = 0;
-            Invoke(() => Photino_GetCompositionHostingEnabled_win32(_nativeInstance, out enabled));
+            ThrowIfNotWindowThread(nameof(CompositionHostingEnabled));
+            Photino_GetCompositionHostingEnabled_win32(_nativeInstance, out var enabled);
             return enabled != 0;
         }
     }
 
     /// <summary>
-    /// Windows only, composition hosting: makes a composition surface handle shown at these client-area bounds
-    /// (physical pixels) under the page. The host's renderer makes its swap chain for it
+    /// Composition hosting, on the window's thread: makes a composition surface handle shown at these client-area
+    /// bounds (physical pixels) under the page. The host's renderer makes its swap chain for it
     /// (IDXGIFactoryMedia.CreateSwapChainForCompositionSurfaceHandle) on its own thread. Release it with
     /// <see cref="RemoveCompositionSurface"/> once that swap chain is released. Returns zero on failure.
     /// </summary>
     public IntPtr AddCompositionSurface(Rectangle bounds)
     {
-        ThrowIfNoNativeWindow(nameof(AddCompositionSurface));
-        IntPtr surface = IntPtr.Zero;
-        Invoke(() => surface = Photino_AddCompositionSurface_win32(_nativeInstance, bounds.X, bounds.Y, bounds.Width, bounds.Height));
-        return surface;
+        ThrowIfNotLive(nameof(AddCompositionSurface));
+        return Photino_AddCompositionSurface_win32(_nativeInstance, bounds.X, bounds.Y, bounds.Width, bounds.Height);
     }
 
-    /// <summary>Windows only, composition hosting: moves and clips any number of surfaces in one commit.</summary>
+    /// <summary>Composition hosting, on the window's thread: moves and clips any number of surfaces in one commit.</summary>
     public unsafe void SetCompositionSurfaceBounds(ReadOnlySpan<PhotinoSurfaceBounds> bounds)
     {
-        ThrowIfNoNativeWindow(nameof(SetCompositionSurfaceBounds));
-        if (Environment.CurrentManagedThreadId == _managedThreadId)
-        {
-            fixed (PhotinoSurfaceBounds* first = bounds)
-                Photino_SetCompositionSurfaceBounds_win32(_nativeInstance, first, bounds.Length);
-            return;
-        }
-        var copy = bounds.ToArray();
-        Invoke(() =>
-        {
-            fixed (PhotinoSurfaceBounds* first = copy)
-                Photino_SetCompositionSurfaceBounds_win32(_nativeInstance, first, copy.Length);
-        });
+        ThrowIfNotLive(nameof(SetCompositionSurfaceBounds));
+        fixed (PhotinoSurfaceBounds* first = bounds)
+            Photino_SetCompositionSurfaceBounds_win32(_nativeInstance, first, bounds.Length);
     }
 
     /// <summary>
-    /// Windows only, composition hosting: removes a surface and closes its handle. Call it after the swap chain made
-    /// for it is released. Closing the window closes the handles it made.
+    /// Composition hosting, on the window's thread: removes a surface and closes its handle. Call it after the swap
+    /// chain made for it is released. Does nothing once the window is destroyed (destruction closed its handles).
     /// </summary>
     public void RemoveCompositionSurface(IntPtr surface)
     {
-        ThrowIfNoNativeWindow(nameof(RemoveCompositionSurface));
-        Invoke(() => Photino_RemoveCompositionSurface_win32(_nativeInstance, surface));
+        if (_destroyed)
+            return;
+        ThrowIfNotLive(nameof(RemoveCompositionSurface));
+        Photino_RemoveCompositionSurface_win32(_nativeInstance, surface);
     }
 
     /// <summary>
-    /// Windows only, composition hosting: sets the hit regions in client pixels, replacing any the page published.
-    /// When <paramref name="regionsArePage"/> is true, input inside the regions goes to the page and outside to the
-    /// host; when false, the other way round.
+    /// Composition hosting, on the window's thread: sets the hit regions in client pixels, replacing any the page
+    /// published. When <paramref name="regionsArePage"/> is true, input inside the regions goes to the page and
+    /// outside to the host; when false, the other way round.
     /// </summary>
     public unsafe void SetHitRegions(ReadOnlySpan<Rectangle> regions, bool regionsArePage = true)
     {
-        ThrowIfNoNativeWindow(nameof(SetHitRegions));
+        ThrowIfNotLive(nameof(SetHitRegions));
         int count = regions.Length;
-        var rects = new int[count * 4];
+        Span<int> rects = count <= 64 ? stackalloc int[count * 4] : new int[count * 4];
         for (int i = 0; i < count; ++i)
         {
             rects[i * 4] = regions[i].X;
@@ -203,34 +226,36 @@ public partial class PhotinoWindow
             rects[i * 4 + 2] = regions[i].Width;
             rects[i * 4 + 3] = regions[i].Height;
         }
-        Invoke(() =>
-        {
-            fixed (int* first = rects)
-                Photino_SetHitRegions_win32(_nativeInstance, first, count, (byte)(regionsArePage ? 1 : 0));
-        });
+        fixed (int* first = rects)
+            Photino_SetHitRegions_win32(_nativeInstance, first, count, (byte)(regionsArePage ? 1 : 0));
     }
 
-    /// <summary>Windows only: shows a window created hidden (<see cref="SetStartHidden"/>), applying any kept minimize or maximize.</summary>
+    /// <summary>On the window's thread: shows a window created hidden (<see cref="SetStartHidden"/>), applying any kept minimize or maximize.</summary>
     public void Show()
     {
-        ThrowIfNoNativeWindow(nameof(Show));
-        Invoke(() => Photino_Show_win32(_nativeInstance));
+        ThrowIfNotLive(nameof(Show));
+        Photino_Show_win32(_nativeInstance);
     }
 
+    // On the opener's thread only: a Photino window's thread is the one it is constructed on.
     internal PhotinoWindow CreatePopupWindow(PhotinoPopupRequest request)
     {
+        ThrowIfNotLive(nameof(PhotinoPopupRequest.CreateWindow));
         var popup = new PhotinoWindow();
         popup._windowsOptions = _windowsOptions;
+        popup._windowsOptions.StartHidden = 0;     // a pop-out is meant to be seen; the host may still set it
         popup._windowsOptions.PopupOpener = _nativeInstance;
         popup._windowsOptions.PopupRequestId = request.RequestId;
-        popup._hasWindowsOptions = true;
         popup._hostInputHandler = _hostInputHandler;
         popup._popupRequestedHandler = _popupRequestedHandler;
         popup._popupOpener = this;
+        popup.WebMessageReceived = WebMessageReceived;
         foreach (var scheme in CustomSchemes)
             popup.CustomSchemes[scheme.Key] = scheme.Value;
-        // The opener's page navigates the popup; the URL only satisfies the start parameters' check.
-        popup._startupParameters.StartUrl = string.IsNullOrEmpty(request.Uri) ? "about:blank" : request.Uri;
+        CopyBrowserSettingsTo(ref popup._startupParameters);
+        // Native ignores a popup's start URL (the opener's page navigates it); it only satisfies the parameter check.
+        // Never the page's URI: that is page data, and the native copy has a fixed size.
+        popup._startupParameters.StartUrl = "about:blank";
         if (request.Position is Point position)
             popup.SetUseOsDefaultLocation(false).SetLocation(position);
         if (request.Size is Size size)
@@ -238,15 +263,40 @@ public partial class PhotinoWindow
         return popup;
     }
 
+    // The opener's browser settings as they were set before its creation (setters used after creation change the
+    // live browser only).
+    private void CopyBrowserSettingsTo(ref PhotinoNativeParameters target)
+    {
+        target.TemporaryFilesPath = _startupParameters.TemporaryFilesPath;
+        target.UserAgent = _startupParameters.UserAgent;
+        target.BrowserControlInitParameters = _startupParameters.BrowserControlInitParameters;
+        target.Zoom = _startupParameters.Zoom;
+        target.Transparent = _startupParameters.Transparent;
+        target.ContextMenuEnabled = _startupParameters.ContextMenuEnabled;
+        target.DevToolsEnabled = _startupParameters.DevToolsEnabled;
+        target.GrantBrowserPermissions = _startupParameters.GrantBrowserPermissions;
+        target.MediaAutoplayEnabled = _startupParameters.MediaAutoplayEnabled;
+        target.FileSystemAccessEnabled = _startupParameters.FileSystemAccessEnabled;
+        target.WebSecurityEnabled = _startupParameters.WebSecurityEnabled;
+        target.JavascriptClipboardAccessEnabled = _startupParameters.JavascriptClipboardAccessEnabled;
+        target.MediaStreamEnabled = _startupParameters.MediaStreamEnabled;
+        target.SmoothScrollingEnabled = _startupParameters.SmoothScrollingEnabled;
+        target.IgnoreCertificateErrorsEnabled = _startupParameters.IgnoreCertificateErrorsEnabled;
+        target.NotificationsEnabled = _startupParameters.NotificationsEnabled;
+    }
+
     internal void RefusePopupRequest(int requestId)
     {
-        ThrowIfNoNativeWindow(nameof(RefusePopupRequest));
-        Invoke(() => Photino_RefusePopupRequest_win32(_nativeInstance, requestId));
+        if (_destroyed)
+            return;     // destruction refused every open request
+        ThrowIfNotLive(nameof(PhotinoPopupRequest.Refuse));
+        Photino_RefusePopupRequest_win32(_nativeInstance, requestId);
     }
 
     // Called by WaitForClose on the window's thread in place of Photino_ctor.
     private IntPtr CreateNativeInstance()
     {
+        _hasWindowsOptions = IsWindowsPlatform && HasWindowsOptions;
         if (!_hasWindowsOptions)
             return Photino_ctor(ref _startupParameters);
 
@@ -267,31 +317,53 @@ public partial class PhotinoWindow
         catch
         {
             _popupOpener?._popups.Remove(this);
-            _aliveUntilDestroyed.Free();
+            if (_aliveUntilDestroyed.IsAllocated)
+                _aliveUntilDestroyed.Free();
             throw;
         }
     }
 
     private unsafe byte OnHostInput(IntPtr input)
     {
-        var handler = _hostInputHandler;
-        return (byte)(handler != null && handler(this, in *(PhotinoHostInput*)input) ? 1 : 0);
+        try
+        {
+            var handler = _hostInputHandler;
+            return (byte)(handler != null && handler(this, in *(PhotinoHostInput*)input) ? 1 : 0);
+        }
+        catch (Exception ex)
+        {
+            Log($"host input handler threw: {ex}");
+            return 0;
+        }
     }
 
     private unsafe byte OnPopupRequested(int requestId, IntPtr uri, IntPtr features)
     {
-        var request = new PhotinoPopupRequest(this, requestId, Marshal.PtrToStringUni(uri) ?? string.Empty,
-            in *(PhotinoNativePopupFeatures*)features);
-        var handler = _popupRequestedHandler;
-        return (byte)(handler != null && handler(request) ? 1 : 0);
+        try
+        {
+            var request = new PhotinoPopupRequest(this, requestId, Marshal.PtrToStringUni(uri) ?? string.Empty,
+                in *(PhotinoNativePopupFeatures*)features);
+            var handler = _popupRequestedHandler;
+            return (byte)(handler != null && handler(request) ? 1 : 0);
+        }
+        catch (Exception ex)
+        {
+            Log($"popup request handler threw, request refused: {ex}");
+            return 0;
+        }
     }
 
-    private void OnWindowDestroyed()
+    internal void OnWindowDestroyed()
     {
+        _destroyed = true;
         _popupOpener?._popups.Remove(this);
         try
         {
             WindowDestroyed?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            Log($"window destroyed handler threw: {ex}");
         }
         finally
         {
@@ -300,20 +372,28 @@ public partial class PhotinoWindow
         }
     }
 
-    private void PrepareWindowsOption(string option)
+    private void ThrowIfCreatedOrNotWindows(string option)
     {
         if (!IsWindowsPlatform)
             throw new PlatformNotSupportedException($"{option} is available on Windows only.");
         if (_nativeInstance != IntPtr.Zero)
             throw new InvalidOperationException($"{option} must be called before the native window is created.");
-        _hasWindowsOptions = true;
     }
 
-    private void ThrowIfNoNativeWindow(string operation)
+    private void ThrowIfNotLive(string operation)
     {
         if (!IsWindowsPlatform)
             throw new PlatformNotSupportedException($"{operation} is available on Windows only.");
+        if (_destroyed)
+            throw new ObjectDisposedException(nameof(PhotinoWindow), $"{operation}: the native window was destroyed.");
         if (_nativeInstance == IntPtr.Zero)
             throw new ApplicationException($"{operation} cannot be called until after the Photino window is initialized.");
+        ThrowIfNotWindowThread(operation);
+    }
+
+    private void ThrowIfNotWindowThread(string operation)
+    {
+        if (Environment.CurrentManagedThreadId != _managedThreadId)
+            throw new InvalidOperationException($"{operation} must be called on the window's thread.");
     }
 }
