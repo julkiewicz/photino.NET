@@ -32,8 +32,13 @@
 		</PropertyGroup>
 	</Target>
 
+  <PropertyGroup>
+    <!-- The Photino.Native package to build against; a fork passes its own version (and feed) on the command line. -->
+    <PhotinoNativeVersion Condition="'$(PhotinoNativeVersion)' == ''">4.0.22</PhotinoNativeVersion>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="Photino.Native" Version="4.0.22" />
+    <PackageReference Include="Photino.Native" Version="$(PhotinoNativeVersion)" />
   </ItemGroup>
 
 </Project>

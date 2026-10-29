@@ -1,0 +1,16 @@
+<!-- A headless check of the Windows hosting options through Photino.NET. Run it only through a separate-desktop
+     launcher (photino.Native's tests/CompositionCheck DesktopRun.exe); it refuses to run on the input desktop. -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>true</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Photino.NET\Photino.NET.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -2402,7 +2402,7 @@ public partial class PhotinoWindow
                 else if (IsMacOsPlatform)
                     Invoke(() => Photino_register_mac());
 
-                Invoke(() => _nativeInstance = Photino_ctor(ref _startupParameters));
+                Invoke(() => _nativeInstance = CreateNativeInstance());
             }
             catch (Exception ex)
             {
