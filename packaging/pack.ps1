@@ -21,6 +21,6 @@ $commit = (git -C $root rev-parse HEAD).Trim()
 $url = (git -C $root remote get-url origin).Trim() -replace '^git@([^:]+):', 'https://$1/' -replace '[.]git$', ''
 dotnet pack (Join-Path $root 'Photino.NET/Photino.NET.csproj') @common -o $feedPath "-p:Version=$Version" `
     "-p:PackageVersion=$Version" "-p:RepositoryUrl=$url" "-p:RepositoryCommit=$commit" "-p:PackageProjectUrl=$url" `
-    '-p:Description=A fork of Photino.NET with Windows hosting options (composition, host surfaces, hit regions, host input, popups); see FORK.md in the repository.' `
-    '-p:PackageDescription=A fork of Photino.NET with Windows hosting options (composition, host surfaces, hit regions, host input, popups); see FORK.md in the repository.'
+    '-p:Description=A fork of Photino.NET with Windows hosting options. See FORK.md in the repository.' `
+    '-p:PackageDescription=A fork of Photino.NET with Windows hosting options. See FORK.md in the repository.'
 if ($LASTEXITCODE -ne 0) { throw 'Pack failed.' }
