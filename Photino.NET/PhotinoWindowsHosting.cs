@@ -152,8 +152,9 @@ public sealed class PhotinoHostDrop
 /// Called on the window's thread for a drag over the host's area in composition mode. Return the effect the host
 /// takes (<see cref="PhotinoDropEffects.None"/> refuses it there; masked by the allowed effects). For an enter, null
 /// passes the drag to the page instead: the page has it over the host's area until it leaves that area, and the host
-/// gets no over, leave or drop for it meanwhile. A leave's answer is ignored. An exception it throws is logged and
-/// taken as a refusal.
+/// gets no over, leave or drop for it meanwhile (null for any other kind refuses). A leave's answer is ignored. An
+/// exception it throws is logged and taken as a refusal. It runs inside OLE's call to the window: to close the window
+/// from it, post the close (closing it in the call ends the drag, which the handler then hears as a leave).
 /// </summary>
 public delegate PhotinoDropEffects? PhotinoHostDropHandler(PhotinoWindow window, PhotinoHostDrop drop);
 
