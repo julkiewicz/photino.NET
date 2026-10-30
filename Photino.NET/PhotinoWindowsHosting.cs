@@ -196,11 +196,12 @@ public sealed class PhotinoPopupRequest
     /// </summary>
     /// <remarks>
     /// Copied from the opener: its Windows hosting options except StartHidden (a pop-out starts visible; set it again
-    /// to keep it hidden), its host input and popup request handlers, its web message handlers, its custom schemes,
-    /// and its browser settings as set before its creation (context menu, dev tools, zoom, user agent, permissions,
-    /// transparency, temporary files path and the other start parameters of that kind). Taken from the request:
-    /// window.open's position and size, as the page gave them. Not copied: the title, icon, size limits, the other
-    /// window events (closing, resize, focus, destroyed) and anything changed on the opener after its creation.
+    /// to keep it hidden), its host input and popup request handlers, its custom schemes, and its browser settings as
+    /// set before its creation (context menu, dev tools, zoom, user agent, permissions, transparency, temporary files
+    /// path and the other start parameters of that kind). Taken from the request: window.open's position and size, as
+    /// the page gave them. Not copied: the title, icon, size limits, the web message handlers (a window's own: register
+    /// the popup's), the window events (closing, resize, focus, destroyed) and anything changed on the opener after its
+    /// creation.
     /// </remarks>
     public PhotinoWindow CreateWindow() => Opener.CreatePopupWindow(this);
 

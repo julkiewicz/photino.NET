@@ -3,6 +3,7 @@
 // messages and web messages only (never SendInput or SetForegroundWindow), and it refuses to run on the input
 // desktop: start it through a separate-desktop launcher.
 using System.Drawing;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Photino.NET;
 
@@ -224,6 +225,10 @@ internal sealed class HostingCheck
             $"{_acceptedRequest?.Size} {_acceptedRequest?.Position}");
         Check("the popup is the opener's", _popup?.PopupOpener == _main && _main.Popups.Contains(_popup));
         Check("the popup is of the opener's kind (composition)", _popup?.CompositionHostingEnabled == true);
+        // A web message handler is per window: a popup's messages are its own page's, never the opener's.
+        Check("the popup takes none of the opener's web message handlers",
+            typeof(PhotinoWindow).GetField(nameof(PhotinoWindow.WebMessageReceived), BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(_popup) is null
+            && typeof(PhotinoWindow).GetField(nameof(PhotinoWindow.WebMessageReceived), BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(_main) is not null);
 
         // The window a host does not hold is pinned until destroyed: callbacks still arrive after a full collection.
         GC.Collect();

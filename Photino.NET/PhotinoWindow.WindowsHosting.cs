@@ -294,7 +294,6 @@ public partial class PhotinoWindow
         popup._navigationStartingHandler = _navigationStartingHandler;
         popup._hostDropHandler = _hostDropHandler;
         popup._popupOpener = this;
-        popup.WebMessageReceived = WebMessageReceived;
         foreach (var scheme in CustomSchemes)
             popup.CustomSchemes[scheme.Key] = scheme.Value;
         CopyBrowserSettingsTo(ref popup._startupParameters);
