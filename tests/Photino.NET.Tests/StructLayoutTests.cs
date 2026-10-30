@@ -9,10 +9,11 @@ namespace Photino.NET.Tests;
 public class StructLayoutTests
 {
     [Theory]
-    [InlineData("PhotinoWindowsOptions", typeof(PhotinoNativeWindowsOptions), new[] { "StartHidden", "CompositionHosting", "HitRegionHoldMilliseconds", "HostInputHandler", "PopupRequestedHandler", "PopupRequestTimeoutMilliseconds", "PopupOpener", "PopupRequestId", "DestroyedHandler", "NavigationStartingHandler", "BrowserAcceleratorKeysDisabled", "Size" })]
+    [InlineData("PhotinoWindowsOptions", typeof(PhotinoNativeWindowsOptions), new[] { "StartHidden", "CompositionHosting", "HitRegionHoldMilliseconds", "HostInputHandler", "PopupRequestedHandler", "PopupRequestTimeoutMilliseconds", "PopupOpener", "PopupRequestId", "DestroyedHandler", "NavigationStartingHandler", "BrowserAcceleratorKeysDisabled", "HostDropHandler", "Size" })]
     [InlineData("PhotinoHostInput", typeof(PhotinoHostInput), new[] { "Message", "X", "Y", "WParam", "LParam" })]
     [InlineData("PhotinoSurfaceBounds", typeof(PhotinoSurfaceBounds), new[] { "Surface", "X", "Y", "Width", "Height" })]
     [InlineData("PhotinoPopupFeatures", typeof(PhotinoNativePopupFeatures), new[] { "HasPosition", "HasSize", "Left", "Top", "Width", "Height" })]
+    [InlineData("PhotinoHostDrop", typeof(PhotinoNativeHostDrop), new[] { "Kind", "X", "Y", "KeyState", "AllowedEffects", "Formats", "Files", "Text" })]
     [InlineData("PhotinoInitParams", typeof(PhotinoNativeParameters), new[] { "Size" })]
     public void ManagedLayoutMatchesNative(string nativeName, Type managed, string[] fields)
     {
@@ -31,10 +32,11 @@ public class StructLayoutTests
     public void EveryManagedFieldIsChecked()
     {
         // A field added on the managed side only would otherwise go unchecked (PhotinoInitParams is checked by size).
-        Assert.Equal(12, typeof(PhotinoNativeWindowsOptions).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
+        Assert.Equal(13, typeof(PhotinoNativeWindowsOptions).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
         Assert.Equal(5, typeof(PhotinoHostInput).GetFields().Length);
         Assert.Equal(5, typeof(PhotinoSurfaceBounds).GetFields().Length);
         Assert.Equal(6, typeof(PhotinoNativePopupFeatures).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
+        Assert.Equal(8, typeof(PhotinoNativeHostDrop).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
     }
 
     [Fact]
@@ -45,6 +47,7 @@ public class StructLayoutTests
         AssertBlittable<PhotinoHostInput>();
         AssertBlittable<PhotinoSurfaceBounds>();
         AssertBlittable<PhotinoNativePopupFeatures>();
+        AssertBlittable<PhotinoNativeHostDrop>();
     }
 
     private static void AssertBlittable<T>() where T : struct

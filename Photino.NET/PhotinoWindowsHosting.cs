@@ -87,6 +87,76 @@ public delegate bool PhotinoPopupRequestedHandler(PhotinoPopupRequest request);
 /// </summary>
 public delegate bool PhotinoNavigationStartingHandler(PhotinoWindow window, string uri);
 
+/// <summary>The drag and drop effects (OLE's DROPEFFECT flags).</summary>
+[Flags]
+public enum PhotinoDropEffects : uint
+{
+    None = 0,
+    Copy = 1,
+    Move = 2,
+    Link = 4,
+}
+
+/// <summary>What happens to a drag over the host's area.</summary>
+public enum PhotinoHostDropKind
+{
+    /// <summary>The drag came into the host's area.</summary>
+    Enter = 0,
+    /// <summary>The drag moved within the host's area.</summary>
+    Over = 1,
+    /// <summary>The drag left the host's area or the window, or was cancelled.</summary>
+    Leave = 2,
+    /// <summary>The data was dropped on the host's area.</summary>
+    Drop = 3,
+}
+
+/// <summary>
+/// One drag and drop event over the host's area (outside the page's hit regions) in composition mode (Windows only).
+/// </summary>
+public sealed class PhotinoHostDrop
+{
+    internal PhotinoHostDrop(in PhotinoNativeHostDrop native)
+    {
+        Kind = (PhotinoHostDropKind)native.Kind;
+        X = native.X;
+        Y = native.Y;
+        KeyState = native.KeyState;
+        AllowedEffects = (PhotinoDropEffects)native.AllowedEffects;
+        Formats = Lines(native.Formats);
+        Files = Lines(native.Files);
+        Text = native.Text == IntPtr.Zero ? null : Marshal.PtrToStringUni(native.Text);
+    }
+
+    private static string[] Lines(IntPtr text) =>
+        text == IntPtr.Zero ? Array.Empty<string>() : (Marshal.PtrToStringUni(text) ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>What happened to the drag.</summary>
+    public PhotinoHostDropKind Kind { get; }
+    /// <summary>The pointer's x in client pixels.</summary>
+    public int X { get; }
+    /// <summary>The pointer's y in client pixels.</summary>
+    public int Y { get; }
+    /// <summary>The keys and buttons held (the MK_* flags).</summary>
+    public uint KeyState { get; }
+    /// <summary>The effects the drag's source allows.</summary>
+    public PhotinoDropEffects AllowedEffects { get; }
+    /// <summary>The data's clipboard formats (standard ones as CF_*, registered ones by name); empty on a leave.</summary>
+    public IReadOnlyList<string> Formats { get; }
+    /// <summary>On a drop, the dropped files' paths (CF_HDROP); otherwise empty.</summary>
+    public IReadOnlyList<string> Files { get; }
+    /// <summary>On a drop, the data's text (CF_UNICODETEXT), or null when it has none; otherwise null.</summary>
+    public string Text { get; }
+}
+
+/// <summary>
+/// Called on the window's thread for a drag over the host's area in composition mode. Return the effect the host
+/// takes (<see cref="PhotinoDropEffects.None"/> refuses it there; masked by the allowed effects). For an enter, null
+/// passes the drag to the page instead: the page has it over the host's area until it leaves that area, and the host
+/// gets no over, leave or drop for it meanwhile. A leave's answer is ignored. An exception it throws is logged and
+/// taken as a refusal.
+/// </summary>
+public delegate PhotinoDropEffects? PhotinoHostDropHandler(PhotinoWindow window, PhotinoHostDrop drop);
+
 /// <summary>
 /// A page's window.open, reported to the host (Windows only).
 /// </summary>
@@ -151,7 +221,21 @@ internal struct PhotinoNativeWindowsOptions
     internal IntPtr DestroyedHandler;
     internal IntPtr NavigationStartingHandler;
     internal byte BrowserAcceleratorKeysDisabled;   // C++ bool: one byte
+    internal IntPtr HostDropHandler;
     internal int Size;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct PhotinoNativeHostDrop
+{
+    internal int Kind;
+    internal int X;
+    internal int Y;
+    internal uint KeyState;
+    internal uint AllowedEffects;
+    internal IntPtr Formats;            // UTF-16, one per line, or null
+    internal IntPtr Files;
+    internal IntPtr Text;
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -169,3 +253,4 @@ internal struct PhotinoNativePopupFeatures
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate byte CppPopupRequestedDelegate(int requestId, IntPtr uri, IntPtr features);
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate void CppDestroyedDelegate();
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate byte CppNavigationStartingDelegate(IntPtr uri);
+[UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate uint CppHostDropDelegate(IntPtr drop);

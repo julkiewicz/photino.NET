@@ -38,6 +38,7 @@ public partial class PhotinoWindow
     private PhotinoHostInputHandler _hostInputHandler;
     private PhotinoPopupRequestedHandler _popupRequestedHandler;
     private PhotinoNavigationStartingHandler _navigationStartingHandler;
+    private PhotinoHostDropHandler _hostDropHandler;
     // Made with Photino_ctorWithOptions_win32 (decided at creation; see HasWindowsOptions).
     private bool _hasWindowsOptions;
     // Set when the native window is destroyed: hosting calls after it throw, or do nothing where that is safe.
@@ -47,6 +48,7 @@ public partial class PhotinoWindow
     private CppPopupRequestedDelegate _cppPopupRequested;
     private CppDestroyedDelegate _cppDestroyed;
     private CppNavigationStartingDelegate _cppNavigationStarting;
+    private CppHostDropDelegate _cppHostDrop;
     // Keeps a window made with these options (and its delegates) alive until its native window is destroyed, so a
     // popup the host does not hold on to is not collected while it is open.
     private GCHandle _aliveUntilDestroyed;
@@ -78,6 +80,7 @@ public partial class PhotinoWindow
         || _windowsOptions.HitRegionHoldMilliseconds != 0 || _windowsOptions.PopupRequestTimeoutMilliseconds != 0
         || _windowsOptions.BrowserAcceleratorKeysDisabled != 0
         || _hostInputHandler != null || _popupRequestedHandler != null || _navigationStartingHandler != null
+        || _hostDropHandler != null
         || WindowDestroyed != null || _popupOpener != null;
 
     /// <summary>
@@ -159,6 +162,19 @@ public partial class PhotinoWindow
     {
         ThrowIfCreatedOrNotWindows(nameof(RegisterNavigationStartingHandler));
         _navigationStartingHandler = handler;
+        return this;
+    }
+
+    /// <summary>
+    /// Windows only, before the window is created: drags over the host's area (outside the page's hit regions) in
+    /// composition mode are offered to the host first. Without one, the page has drags over the whole window, as with
+    /// the usual hosting (composition mode always makes the window its page's drop target). The popups the page opens
+    /// take the same handler.
+    /// </summary>
+    public PhotinoWindow RegisterHostDropHandler(PhotinoHostDropHandler handler)
+    {
+        ThrowIfCreatedOrNotWindows(nameof(RegisterHostDropHandler));
+        _hostDropHandler = handler;
         return this;
     }
 
@@ -276,6 +292,7 @@ public partial class PhotinoWindow
         popup._hostInputHandler = _hostInputHandler;
         popup._popupRequestedHandler = _popupRequestedHandler;
         popup._navigationStartingHandler = _navigationStartingHandler;
+        popup._hostDropHandler = _hostDropHandler;
         popup._popupOpener = this;
         popup.WebMessageReceived = WebMessageReceived;
         foreach (var scheme in CustomSchemes)
@@ -332,10 +349,12 @@ public partial class PhotinoWindow
         _cppPopupRequested = OnPopupRequested;
         _cppDestroyed = OnWindowDestroyed;
         _cppNavigationStarting = OnNavigationStarting;
+        _cppHostDrop = OnHostDrop;
         _windowsOptions.HostInputHandler = _hostInputHandler == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(_cppHostInput);
         _windowsOptions.PopupRequestedHandler = _popupRequestedHandler == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(_cppPopupRequested);
         _windowsOptions.DestroyedHandler = Marshal.GetFunctionPointerForDelegate(_cppDestroyed);
         _windowsOptions.NavigationStartingHandler = _navigationStartingHandler == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(_cppNavigationStarting);
+        _windowsOptions.HostDropHandler = _hostDropHandler == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(_cppHostDrop);
         _windowsOptions.Size = Marshal.SizeOf<PhotinoNativeWindowsOptions>();
 
         _aliveUntilDestroyed = GCHandle.Alloc(this);
@@ -393,6 +412,27 @@ public partial class PhotinoWindow
         catch (Exception ex)
         {
             Log($"navigation starting handler threw, navigation cancelled: {ex}");
+            return 0;
+        }
+    }
+
+    // The native answer for an enter that passes the drag to the page (PHOTINO_HOST_DROP_TO_PAGE).
+    internal const uint HostDropToPage = 0xFFFFFFFF;
+
+    internal unsafe uint OnHostDrop(IntPtr drop)
+    {
+        var native = (PhotinoNativeHostDrop*)drop;
+        try
+        {
+            var handler = _hostDropHandler;
+            var answer = handler?.Invoke(this, new PhotinoHostDrop(in *native));
+            if (answer == null)
+                return native->Kind == (int)PhotinoHostDropKind.Enter ? HostDropToPage : 0;
+            return (uint)answer.Value & native->AllowedEffects;
+        }
+        catch (Exception ex)
+        {
+            Log($"host drop handler threw, drop refused: {ex}");
             return 0;
         }
     }
