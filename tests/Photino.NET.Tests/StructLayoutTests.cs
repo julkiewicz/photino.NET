@@ -31,7 +31,7 @@ public class StructLayoutTests
     public void EveryManagedFieldIsChecked()
     {
         // A field added on the managed side only would otherwise go unchecked (PhotinoInitParams is checked by size).
-        Assert.Equal(10, typeof(PhotinoNativeWindowsOptions).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
+        Assert.Equal(12, typeof(PhotinoNativeWindowsOptions).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
         Assert.Equal(5, typeof(PhotinoHostInput).GetFields().Length);
         Assert.Equal(5, typeof(PhotinoSurfaceBounds).GetFields().Length);
         Assert.Equal(6, typeof(PhotinoNativePopupFeatures).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Length);
