@@ -37,6 +37,7 @@ public partial class PhotinoWindow
     private PhotinoNativeWindowsOptions _windowsOptions;
     private PhotinoHostInputHandler _hostInputHandler;
     private PhotinoPopupRequestedHandler _popupRequestedHandler;
+    private PhotinoNavigationStartingHandler _navigationStartingHandler;
     // Made with Photino_ctorWithOptions_win32 (decided at creation; see HasWindowsOptions).
     private bool _hasWindowsOptions;
     // Set when the native window is destroyed: hosting calls after it throw, or do nothing where that is safe.
@@ -45,6 +46,7 @@ public partial class PhotinoWindow
     private CppHostInputDelegate _cppHostInput;
     private CppPopupRequestedDelegate _cppPopupRequested;
     private CppDestroyedDelegate _cppDestroyed;
+    private CppNavigationStartingDelegate _cppNavigationStarting;
     // Keeps a window made with these options (and its delegates) alive until its native window is destroyed, so a
     // popup the host does not hold on to is not collected while it is open.
     private GCHandle _aliveUntilDestroyed;
@@ -74,8 +76,9 @@ public partial class PhotinoWindow
     private bool HasWindowsOptions =>
         _windowsOptions.StartHidden != 0 || _windowsOptions.CompositionHosting != 0
         || _windowsOptions.HitRegionHoldMilliseconds != 0 || _windowsOptions.PopupRequestTimeoutMilliseconds != 0
-        || _hostInputHandler != null || _popupRequestedHandler != null || WindowDestroyed != null
-        || _popupOpener != null;
+        || _windowsOptions.BrowserAcceleratorKeysDisabled != 0
+        || _hostInputHandler != null || _popupRequestedHandler != null || _navigationStartingHandler != null
+        || WindowDestroyed != null || _popupOpener != null;
 
     /// <summary>
     /// Windows only, before the window is created: create it without showing it. The page still loads, lays out
@@ -144,6 +147,30 @@ public partial class PhotinoWindow
     {
         ThrowIfCreatedOrNotWindows(nameof(RegisterPopupRequestedHandler));
         _popupRequestedHandler = handler;
+        return this;
+    }
+
+    /// <summary>
+    /// Windows only, before the window is created: asked before every navigation of the page and of its frames, the
+    /// first load included; returning false cancels it. The popups the page opens take the same handler. An exception
+    /// it throws is logged and the navigation cancelled.
+    /// </summary>
+    public PhotinoWindow RegisterNavigationStartingHandler(PhotinoNavigationStartingHandler handler)
+    {
+        ThrowIfCreatedOrNotWindows(nameof(RegisterNavigationStartingHandler));
+        _navigationStartingHandler = handler;
+        return this;
+    }
+
+    /// <summary>
+    /// Windows only, before the window is created: whether the browser's own keys work (reload, find, print, history,
+    /// zoom and the like; true by default). Turned off, the page still gets every key, and DevTools' keys follow
+    /// <see cref="SetDevToolsEnabled"/>. The popups the page opens take the same setting.
+    /// </summary>
+    public PhotinoWindow SetBrowserAcceleratorKeysEnabled(bool enabled)
+    {
+        ThrowIfCreatedOrNotWindows(nameof(SetBrowserAcceleratorKeysEnabled));
+        _windowsOptions.BrowserAcceleratorKeysDisabled = (byte)(enabled ? 0 : 1);
         return this;
     }
 
@@ -248,6 +275,7 @@ public partial class PhotinoWindow
         popup._windowsOptions.PopupRequestId = request.RequestId;
         popup._hostInputHandler = _hostInputHandler;
         popup._popupRequestedHandler = _popupRequestedHandler;
+        popup._navigationStartingHandler = _navigationStartingHandler;
         popup._popupOpener = this;
         popup.WebMessageReceived = WebMessageReceived;
         foreach (var scheme in CustomSchemes)
@@ -303,9 +331,11 @@ public partial class PhotinoWindow
         _cppHostInput = OnHostInput;
         _cppPopupRequested = OnPopupRequested;
         _cppDestroyed = OnWindowDestroyed;
+        _cppNavigationStarting = OnNavigationStarting;
         _windowsOptions.HostInputHandler = _hostInputHandler == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(_cppHostInput);
         _windowsOptions.PopupRequestedHandler = _popupRequestedHandler == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(_cppPopupRequested);
         _windowsOptions.DestroyedHandler = Marshal.GetFunctionPointerForDelegate(_cppDestroyed);
+        _windowsOptions.NavigationStartingHandler = _navigationStartingHandler == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(_cppNavigationStarting);
         _windowsOptions.Size = Marshal.SizeOf<PhotinoNativeWindowsOptions>();
 
         _aliveUntilDestroyed = GCHandle.Alloc(this);
@@ -349,6 +379,20 @@ public partial class PhotinoWindow
         catch (Exception ex)
         {
             Log($"popup request handler threw, request refused: {ex}");
+            return 0;
+        }
+    }
+
+    private byte OnNavigationStarting(IntPtr uri)
+    {
+        try
+        {
+            var handler = _navigationStartingHandler;
+            return (byte)(handler == null || handler(this, Marshal.PtrToStringUni(uri) ?? string.Empty) ? 1 : 0);
+        }
+        catch (Exception ex)
+        {
+            Log($"navigation starting handler threw, navigation cancelled: {ex}");
             return 0;
         }
     }

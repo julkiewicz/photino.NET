@@ -9,7 +9,7 @@ namespace Photino.NET.Tests;
 public class StructLayoutTests
 {
     [Theory]
-    [InlineData("PhotinoWindowsOptions", typeof(PhotinoNativeWindowsOptions), new[] { "StartHidden", "CompositionHosting", "HitRegionHoldMilliseconds", "HostInputHandler", "PopupRequestedHandler", "PopupRequestTimeoutMilliseconds", "PopupOpener", "PopupRequestId", "DestroyedHandler", "Size" })]
+    [InlineData("PhotinoWindowsOptions", typeof(PhotinoNativeWindowsOptions), new[] { "StartHidden", "CompositionHosting", "HitRegionHoldMilliseconds", "HostInputHandler", "PopupRequestedHandler", "PopupRequestTimeoutMilliseconds", "PopupOpener", "PopupRequestId", "DestroyedHandler", "NavigationStartingHandler", "BrowserAcceleratorKeysDisabled", "Size" })]
     [InlineData("PhotinoHostInput", typeof(PhotinoHostInput), new[] { "Message", "X", "Y", "WParam", "LParam" })]
     [InlineData("PhotinoSurfaceBounds", typeof(PhotinoSurfaceBounds), new[] { "Surface", "X", "Y", "Width", "Height" })]
     [InlineData("PhotinoPopupFeatures", typeof(PhotinoNativePopupFeatures), new[] { "HasPosition", "HasSize", "Left", "Top", "Width", "Height" })]

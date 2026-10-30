@@ -81,6 +81,13 @@ public delegate bool PhotinoHostInputHandler(PhotinoWindow window, in PhotinoHos
 public delegate bool PhotinoPopupRequestedHandler(PhotinoPopupRequest request);
 
 /// <summary>
+/// Called on the window's thread before its page, or a frame in it, navigates to <paramref name="uri"/>: the first
+/// load, a link, a script setting location, a reload, a dropped file or link. Return false to cancel the navigation;
+/// the page stays as it is.
+/// </summary>
+public delegate bool PhotinoNavigationStartingHandler(PhotinoWindow window, string uri);
+
+/// <summary>
 /// A page's window.open, reported to the host (Windows only).
 /// </summary>
 public sealed class PhotinoPopupRequest
@@ -142,6 +149,8 @@ internal struct PhotinoNativeWindowsOptions
     internal IntPtr PopupOpener;
     internal int PopupRequestId;
     internal IntPtr DestroyedHandler;
+    internal IntPtr NavigationStartingHandler;
+    internal byte BrowserAcceleratorKeysDisabled;   // C++ bool: one byte
     internal int Size;
 }
 
@@ -159,3 +168,4 @@ internal struct PhotinoNativePopupFeatures
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate byte CppHostInputDelegate(IntPtr input);
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate byte CppPopupRequestedDelegate(int requestId, IntPtr uri, IntPtr features);
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate void CppDestroyedDelegate();
+[UnmanagedFunctionPointer(CallingConvention.Cdecl)] internal delegate byte CppNavigationStartingDelegate(IntPtr uri);

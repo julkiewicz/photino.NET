@@ -9,3 +9,7 @@ same branch name. A window that sets none of the options is created exactly as u
 - Added: `Photino.NET/PhotinoWindowsHosting.cs`, `Photino.NET/PhotinoWindow.WindowsHosting.cs`, `packaging/pack.ps1`,
   `tests/Photino.NET.Tests/` (struct layout and guard tests), `tests/Photino.NET.HostingCheck/` (a headless check run
   on a desktop of its own).
+
+Known limit, carried from upstream: the message loop's state is process-wide (`_messageLoopIsStarted` here,
+`hwndToPhotino` and the message loop's root window in the native library), so a process has one main window, whose
+closing ends the loop; other windows are its popups or are made on its thread.
